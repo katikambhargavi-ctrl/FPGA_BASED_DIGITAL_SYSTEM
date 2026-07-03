@@ -1,3 +1,8 @@
+Candidate Name: Bhargavi Katikam
+Intern ID: CITS2263
+
+
+
 # 32-bit RISC Processor using Verilog HDL
 
 ## Internship
