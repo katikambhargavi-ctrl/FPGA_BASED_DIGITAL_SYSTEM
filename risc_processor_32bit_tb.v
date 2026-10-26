@@ -3,9 +3,9 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date: 22.06.2026 12:36:59
+// Create Date: 30.07.2026 11:07:33
 // Design Name: 
-// Module Name: risc_processor_32bit_tb
+// Module Name: RISC_V_I_tb
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
@@ -18,62 +18,83 @@
 // Additional Comments:
 // 
 //////////////////////////////////////////////////////////////////////////////////
-`timescale 1ns/1ps
 
-module risc_processor_32bit_tb;
+module RISC_V_I_tb;
 
-reg clk;
-reg reset;
+    reg clk;
+    reg rst;
 
-risc_processor_32bit uut (
-    .clk(clk),
-    .reset(reset)
-);
+    // Instantiate the DUT
+    RISC_V_I dut (
+        .clk(clk),
+        .rst(rst)
+    );
 
-// Clock generation
-initial begin
-    clk = 0;
-    forever #5 clk = ~clk;
-end
+    // ---------------- Clock generation ----------------
+    // 10ns period
+    initial clk = 1'b0;
+    always #5 clk = ~clk;
 
-// Apply reset and initialize registers
-initial begin
-    reset = 1;
-    #10;
-    reset = 0;
+    // ---------------- Load test program ----------------
+    // Loaded via hierarchical reference into the DUT's instruction
+    // memory array. Do this before releasing reset.
+    initial begin
+        dut.Instruction_Memory.mem[0] = 32'h006283b3; // add  x7,  x5, x6
+        dut.Instruction_Memory.mem[1] = 32'h00a38e13; // addi x28, x7, 10
+        dut.Instruction_Memory.mem[2] = 32'h01c02023; // sw   x28, 0(x0)
+        dut.Instruction_Memory.mem[3] = 32'h00000e83; // lw   x29, 0(x0)
+        dut.Instruction_Memory.mem[4] = 32'h01de0463; // beq  x28, x29, 8
+        dut.Instruction_Memory.mem[5] = 32'h06300f13; // addi x30, x0, 99  (skipped)
+        dut.Instruction_Memory.mem[6] = 32'h03700f93; // addi x31, x0, 55  (branch target)
+    end
 
-    // Initialize register file
-    uut.RF.registers[1] = 32'd10;   // R1 = 10
-    uut.RF.registers[2] = 32'd5;    // R2 = 5
+    // ---------------- Reset sequence ----------------
+    // rst is active-LOW in this design (PC_Module clears on ~rst).
+    initial begin
+        rst = 1'b0;           // hold in reset
+        repeat (2) @(posedge clk);
+        rst = 1'b1;            // release reset, normal operation begins
+    end
 
-    // Initialize data memory
-    uut.DM.memory[3] = 32'd100;
+    // ---------------- Cycle-by-cycle trace (Tcl Console) ----------------
+    initial begin
+        $display("time\tPC\t\tInstr\t\tPCSrc\tRegWrite\tResult");
+        forever begin
+            @(posedge clk);
+            #1; // let signals settle after the clock edge
+            $display("%0t\t%h\t%h\t%b\t%b\t\t%h",
+                $time, dut.PC_Top, dut.RD_Instr, dut.PCSrc,
+                dut.RegWrite, dut.Result);
+        end
+    end
 
-    #100;
+    // ---------------- Run and self-check ----------------
+    initial begin
+        // hold reset (2 cycles) + 7 instructions, extra margin for
+        // single-cycle timing -> 15 cycles is comfortably enough
+        repeat (15) @(posedge clk);
+        #1;
 
-    $display("\n===== Register Contents =====");
-    $display("R1 = %0d", uut.RF.registers[1]);
-    $display("R2 = %0d", uut.RF.registers[2]);
-    $display("R3 = %0d (ADD Result)", uut.RF.registers[3]);
-    $display("R4 = %0d (SUB Result)", uut.RF.registers[4]);
-    $display("R5 = %0d (AND Result)", uut.RF.registers[5]);
-    $display("R6 = %0d (OR Result)", uut.RF.registers[6]);
-    $display("R7 = %0d (LW Result)", uut.RF.registers[7]);
+        $display("\n===== Final Register Values =====");
+        $display("x7  (expect 9)  = %0d", dut.Register_File.Register[7]);
+        $display("x28 (expect 19) = %0d", dut.Register_File.Register[28]);
+        $display("x29 (expect 19) = %0d", dut.Register_File.Register[29]);
+        $display("x30 (must NOT become 99 -- proves the branch skip worked) = %0d", dut.Register_File.Register[30]);
+        $display("x31 (expect 55, branch target)     = %0d", dut.Register_File.Register[31]);
+        $display("mem[0] (expect 19) = %0d", dut.Data_Memory.mem[0]);
 
-    $display("\n===== Data Memory =====");
-    $display("MEM[3] = %0d", uut.DM.memory[3]);
-    $display("MEM[4] = %0d", uut.DM.memory[4]);
+        // Basic self-check
+        if (dut.Register_File.Register[7]  == 32'd9  &&
+            dut.Register_File.Register[28] == 32'd19 &&
+            dut.Register_File.Register[29] == 32'd19 &&
+            dut.Register_File.Register[30] !== 32'd99 &&
+            dut.Register_File.Register[31] == 32'd55 &&
+            dut.Data_Memory.mem[0]         == 32'd19)
+            $display("\nTEST PASSED: R-type, I-type, load/store, and branch-taken all correct.");
+        else
+            $display("\nTEST FAILED: check trace above against expected values.");
 
-    $finish;
-end
-
-// Monitor processor operation
-initial begin
-    $monitor("Time=%0t PC=%0d Instr=%h ALU_Result=%0d",
-              $time,
-              uut.pc,
-              uut.instr,
-              uut.alu_result);
-end
+        $finish;
+    end
 
 endmodule
